@@ -28,14 +28,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: InvestidorApp/FrontEnd/Vite/InvestidorSupabaseApp.Client/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        working-directory: InvestidorApp/FrontEnd/Vite/InvestidorSupabaseApp.Client
         run: npm ci
 
       - name: Build
-        working-directory: InvestidorApp/FrontEnd/Vite/InvestidorSupabaseApp.Client
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
@@ -46,7 +44,7 @@ jobs:
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: InvestidorApp/FrontEnd/Vite/InvestidorSupabaseApp.Client/dist
+          path: dist
 
   deploy:
     needs: build
