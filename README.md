@@ -1,40 +1,48 @@
-# Investidor Supabase App
+# Gestao Financeira
 
-Frontend estatico em `Vite + TypeScript` para gerenciar proventos diretamente no Supabase.
+Frontend `Vite + TypeScript` para gestao de proventos com Supabase.
 
-## Scripts
+## Requisitos
 
-- `npm.cmd run dev`
-- `npm.cmd run build`
-- `npm.cmd run preview`
+- Node.js 20+
+- npm 10+
 
-## Variaveis de ambiente
+## Setup rapido
 
-Use `.env` ou `.env.local` com:
+```bash
+npm install
+cp .env.example .env.local
+```
+
+Preencha o `.env.local`:
 
 ```env
 VITE_SUPABASE_URL=https://seu-projeto.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sua_chave_publishable
+VITE_SUPABASE_TABLE=provento
+# VITE_BASE_PATH=/
 ```
 
 Tambem funciona `VITE_SUPABASE_ANON_KEY` no lugar de `VITE_SUPABASE_PUBLISHABLE_KEY`.
 
-## Estrutura no Supabase
+## Comandos
 
-Use o script em `supabase/proventos.sql` para criar a tabela `provento` e as policies iniciais.
+- `npm run dev`: ambiente local
+- `npm run build`: build de producao
+- `npm run preview`: validar build local
 
-## Deploy
+## Banco de dados
 
-Para GitHub Pages, ajuste `VITE_BASE_PATH` se o repositorio for publicado em um subcaminho.
+- Execute `supabase/proventos.sql` para criar estrutura inicial.
 
-O workflow de deploy esta em `.github/workflows/deploy.yml`.
+## Rotina recomendada
 
-Antes do primeiro deploy, configure no GitHub:
+```bash
+git pull
+npm install
+npm run dev
+```
 
-- `Settings > Pages > Source: GitHub Actions`
-- `Settings > Secrets and variables > Actions > Variables`
+## Observacoes
 
-Crie estas variables:
-
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- Nao versionar `.env` e `.env.local`.
