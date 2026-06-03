@@ -11,6 +11,28 @@ import {
 import type { Provento, ProventoInsert, SortColumn, SortDirection } from './types';
 
 type FormState = ProventoInsert & { id: number };
+type ViewMode = 'cadastro' | 'resumo';
+
+type SummaryFilters = {
+  year: string;
+  month: string;
+  selectedTypes: string[];
+};
+
+const monthNames = [
+  'Janeiro',
+  'Fevereiro',
+  'Marco',
+  'Abril',
+  'Maio',
+  'Junho',
+  'Julho',
+  'Agosto',
+  'Setembro',
+  'Outubro',
+  'Novembro',
+  'Dezembro',
+];
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -28,8 +50,19 @@ const initialFormState = (): FormState => ({
   dataPagamento: '',
 });
 
+const getCurrentSummaryFilters = (): SummaryFilters => {
+  const now = new Date();
+
+  return {
+    year: String(now.getFullYear()),
+    month: String(now.getMonth() + 1).padStart(2, '0'),
+    selectedTypes: [],
+  };
+};
+
 class ProventoApp {
   private root: HTMLElement;
+  private userEmail: string | null;
   private proventos: Provento[] = [];
   private formState: FormState = initialFormState();
   private selectedFile: File | null = null;
@@ -38,10 +71,13 @@ class ProventoApp {
   private currentPage = 1;
   private itemsPerPage = 10;
   private readonly pageSizeOptions = [10, 20, 50, 100, -1];
+  private activeView: ViewMode = 'cadastro';
+  private summaryFilters: SummaryFilters = getCurrentSummaryFilters();
   private loading = false;
 
-  constructor(root: HTMLElement) {
+  constructor(root: HTMLElement, userEmail: string | null) {
     this.root = root;
+    this.userEmail = userEmail;
   }
 
   async start() {
@@ -127,6 +163,70 @@ class ProventoApp {
     return this.sortedProventos.slice(startIndex, startIndex + this.itemsPerPage);
   }
 
+  private get availableTypes() {
+    return [...new Set(this.proventos.map((provento) => provento.tipo).filter(Boolean))].sort(
+      (a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }),
+    );
+  }
+
+  private get filteredTypes() {
+    return new Set(this.summaryFilters.selectedTypes);
+  }
+
+  private get hasTypeFilter() {
+    return this.summaryFilters.selectedTypes.length > 0;
+  }
+
+  private matchesSelectedTypes(provento: Provento) {
+    return !this.hasTypeFilter || this.filteredTypes.has(provento.tipo);
+  }
+
+  private get monthlySummary() {
+    const totalsByMonth = new Map<string, number>();
+
+    this.proventos
+      .filter((provento) => {
+        return (
+          provento.dataPagamento.slice(0, 4) === this.summaryFilters.year &&
+          this.matchesSelectedTypes(provento)
+        );
+      })
+      .forEach((provento) => {
+        const month = provento.dataPagamento.slice(5, 7);
+        totalsByMonth.set(month, (totalsByMonth.get(month) ?? 0) + provento.valor);
+      });
+
+    return [...totalsByMonth.entries()]
+      .sort(([monthA], [monthB]) => monthA.localeCompare(monthB))
+      .map(([month, total]) => ({ month, total }));
+  }
+
+  private get monthlyDetails() {
+    return this.proventos
+      .filter((provento) => {
+        return (
+          provento.dataPagamento.slice(0, 4) === this.summaryFilters.year &&
+          provento.dataPagamento.slice(5, 7) === this.summaryFilters.month &&
+          this.matchesSelectedTypes(provento)
+        );
+      })
+      .sort((a, b) => {
+        const tickerComparison = a.ticker.localeCompare(b.ticker, 'pt-BR', {
+          sensitivity: 'base',
+        });
+
+        if (tickerComparison !== 0) {
+          return tickerComparison;
+        }
+
+        return a.dataPagamento.localeCompare(b.dataPagamento);
+      });
+  }
+
+  private get monthlyDetailsTotal() {
+    return this.monthlyDetails.reduce((total, provento) => total + provento.valor, 0);
+  }
+
   private get pageNumbers() {
     const pages: number[] = [];
     const maxPagesToShow = 5;
@@ -158,6 +258,43 @@ class ProventoApp {
     }
 
     this.currentPage = 1;
+    this.render();
+  }
+
+  private setView(view: ViewMode) {
+    this.activeView = view;
+    this.render();
+  }
+
+  private setSummaryFilter(field: 'year' | 'month', value: string) {
+    this.summaryFilters = {
+      ...this.summaryFilters,
+      [field]: value,
+    };
+    this.render();
+  }
+
+  private toggleSummaryType(type: string, checked: boolean) {
+    const selectedTypes = new Set(this.summaryFilters.selectedTypes);
+
+    if (checked) {
+      selectedTypes.add(type);
+    } else {
+      selectedTypes.delete(type);
+    }
+
+    this.summaryFilters = {
+      ...this.summaryFilters,
+      selectedTypes: [...selectedTypes],
+    };
+    this.render();
+  }
+
+  private clearSummaryTypes() {
+    this.summaryFilters = {
+      ...this.summaryFilters,
+      selectedTypes: [],
+    };
     this.render();
   }
 
@@ -418,6 +555,40 @@ class ProventoApp {
     const cancelButton = this.root.querySelector<HTMLButtonElement>('#cancel-edit');
     cancelButton?.addEventListener('click', () => this.resetForm());
 
+    const logoutButton = this.root.querySelector<HTMLButtonElement>('#logout');
+    logoutButton?.addEventListener('click', () => {
+      clearStoredUser();
+      window.location.reload();
+    });
+
+    this.root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
+      button.addEventListener('click', () => {
+        this.setView(button.dataset.view as ViewMode);
+      });
+    });
+
+    const summaryYearInput = this.root.querySelector<HTMLInputElement>('#summary-year');
+    summaryYearInput?.addEventListener('change', (event) => {
+      this.setSummaryFilter('year', (event.currentTarget as HTMLInputElement).value);
+    });
+
+    const summaryMonthSelect = this.root.querySelector<HTMLSelectElement>('#summary-month');
+    summaryMonthSelect?.addEventListener('change', (event) => {
+      this.setSummaryFilter('month', (event.currentTarget as HTMLSelectElement).value);
+    });
+
+    this.root.querySelectorAll<HTMLInputElement>('[data-summary-type-index]').forEach((checkbox) => {
+      checkbox.addEventListener('change', () => {
+        const type = this.availableTypes[Number(checkbox.dataset.summaryTypeIndex)];
+        if (type) {
+          this.toggleSummaryType(type, checkbox.checked);
+        }
+      });
+    });
+
+    const clearTypesButton = this.root.querySelector<HTMLButtonElement>('#clear-summary-types');
+    clearTypesButton?.addEventListener('click', () => this.clearSummaryTypes());
+
     const tickerInput = this.root.querySelector<HTMLInputElement>('#ticker');
     tickerInput?.addEventListener('input', (event) => {
       const value = (event.currentTarget as HTMLInputElement).value.toUpperCase();
@@ -547,6 +718,249 @@ class ProventoApp {
       )
       .join('');
 
+    const monthOptions = monthNames
+      .map((monthName, index) => {
+        const month = String(index + 1).padStart(2, '0');
+
+        return `
+          <option value="${month}" ${month === this.summaryFilters.month ? 'selected' : ''}>
+            ${month} - ${monthName}
+          </option>
+        `;
+      })
+      .join('');
+
+    const typeFilters = this.availableTypes
+      .map(
+        (type, index) => `
+          <label class="check-option">
+            <input
+              type="checkbox"
+              data-summary-type-index="${index}"
+              ${this.filteredTypes.has(type) ? 'checked' : ''}
+            />
+            <span>${type}</span>
+          </label>
+        `,
+      )
+      .join('');
+
+    const monthlySummaryRows = this.monthlySummary
+      .map(
+        ({ month, total }) => `
+          <tr>
+            <td>${month} - ${monthNames[Number(month) - 1] ?? month}</td>
+            <td>${currencyFormatter.format(total)}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    const monthlyDetailsRows = this.monthlyDetails
+      .map(
+        (provento) => `
+          <tr>
+            <td>${provento.ticker}</td>
+            <td>${provento.tipo}</td>
+            <td>${currencyFormatter.format(provento.valor)}</td>
+            <td>${this.formatDate(provento.dataPagamento)}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    const cadastroContent = `
+      <div class="grid">
+        <section class="panel">
+          <h2>${this.isEditing ? 'Editar Provento' : 'Adicionar Novo Provento'}</h2>
+          <form id="provento-form">
+            <div class="form-grid">
+              <div class="field">
+                <label for="ticker">Ticker</label>
+                <input id="ticker" name="ticker" type="text" maxlength="50" value="${this.formState.ticker}" required />
+              </div>
+              <div class="field">
+                <label for="tipo">Tipo</label>
+                <input id="tipo" name="tipo" type="text" value="${this.formState.tipo}" required />
+              </div>
+              <div class="field">
+                <label for="valor">Valor</label>
+                <input id="valor" name="valor" type="number" step="0.01" min="0" value="${this.formState.valor || ''}" required />
+              </div>
+              <div class="field">
+                <label for="data-com">Data COM</label>
+                <input id="data-com" name="dataCom" type="date" value="${this.formState.dataCom ?? ''}" />
+              </div>
+              <div class="field">
+                <label for="data-pagamento">Data Pagamento</label>
+                <input id="data-pagamento" name="dataPagamento" type="date" value="${this.formState.dataPagamento}" required />
+              </div>
+            </div>
+            <div class="actions">
+              <button class="btn btn-primary" type="submit" ${this.loading ? 'disabled' : ''}>
+                ${this.isEditing ? 'Atualizar' : 'Adicionar'}
+              </button>
+              ${
+                this.isEditing
+                  ? `<button class="btn btn-secondary" id="cancel-edit" type="button" ${this.loading ? 'disabled' : ''}>Cancelar edicao</button>`
+                  : ''
+              }
+            </div>
+          </form>
+        </section>
+
+        <section class="panel">
+          <h2>Importar Proventos via XLSX</h2>
+          <div class="form-grid">
+            <div class="field">
+              <label for="file-upload">Planilha</label>
+              <input id="file-upload" type="file" accept=".xlsx" ${this.loading ? 'disabled' : ''} />
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn btn-info" id="import-button" type="button" ${!this.selectedFile || this.loading ? 'disabled' : ''}>
+              Importar arquivo
+            </button>
+          </div>
+          <p class="hint">
+            Espera a mesma estrutura usada hoje no backend: ticker na coluna A, data de pagamento na B, tipo na C e valor na G.
+          </p>
+          <p class="hint">
+            Arquivo selecionado: ${this.selectedFile ? this.selectedFile.name : 'nenhum arquivo'}
+          </p>
+        </section>
+
+        <section class="panel">
+          <h2>Lista de Proventos</h2>
+          <div class="toolbar">
+            <label for="page-size">
+              Registros por pagina
+              <select id="page-size">
+                ${pageSizeOptions}
+              </select>
+            </label>
+            <div>Pagina ${this.currentPage} de ${this.totalPages}</div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th data-sort="ticker">Ticker${this.getSortIcon('ticker')}</th>
+                  <th data-sort="tipo">Tipo${this.getSortIcon('tipo')}</th>
+                  <th data-sort="valor">Valor${this.getSortIcon('valor')}</th>
+                  <th data-sort="dataCom">Data COM${this.getSortIcon('dataCom')}</th>
+                  <th data-sort="dataPagamento">Data Pagamento${this.getSortIcon('dataPagamento')}</th>
+                  <th class="static">Acoes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  this.totalItems === 0
+                    ? `<tr><td colspan="6" class="empty">Nenhum provento encontrado.</td></tr>`
+                    : tableRows
+                }
+              </tbody>
+            </table>
+          </div>
+
+          <div class="pagination">
+            <div class="pagination-buttons">
+              <button class="btn btn-secondary" data-page="1" ${this.currentPage === 1 ? 'disabled' : ''}>Primeira</button>
+              <button class="btn btn-secondary" data-page="${Math.max(1, this.currentPage - 1)}" ${this.currentPage === 1 ? 'disabled' : ''}>Anterior</button>
+              ${paginationButtons}
+              <button class="btn btn-secondary" data-page="${Math.min(this.totalPages, this.currentPage + 1)}" ${this.currentPage === this.totalPages ? 'disabled' : ''}>Proxima</button>
+              <button class="btn btn-secondary" data-page="${this.totalPages}" ${this.currentPage === this.totalPages ? 'disabled' : ''}>Ultima</button>
+            </div>
+            <div>Total exibido: ${this.totalItems} registros</div>
+          </div>
+        </section>
+      </div>
+    `;
+
+    const resumoContent = `
+      <div class="grid">
+        <section class="panel">
+          <h2>Filtros do Resumo</h2>
+          <div class="form-grid">
+            <div class="field">
+              <label for="summary-year">Ano</label>
+              <input id="summary-year" type="number" min="1900" max="2100" value="${this.summaryFilters.year}" />
+            </div>
+            <div class="field">
+              <label for="summary-month">Mes</label>
+              <select id="summary-month">
+                ${monthOptions}
+              </select>
+            </div>
+          </div>
+          <div class="type-filter">
+            <div class="type-filter-header">
+              <strong>Tipos</strong>
+              <button class="mini-btn edit" id="clear-summary-types" type="button" ${!this.hasTypeFilter ? 'disabled' : ''}>
+                Todos
+              </button>
+            </div>
+            <div class="check-grid">
+              ${
+                this.availableTypes.length === 0
+                  ? '<p class="hint">Nenhum tipo encontrado nos proventos carregados.</p>'
+                  : typeFilters
+              }
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Total por Mes em ${this.summaryFilters.year}</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="static">Mes</th>
+                  <th class="static">Soma dos Valores</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  this.monthlySummary.length === 0
+                    ? '<tr><td colspan="2" class="empty">Nenhum provento encontrado para estes filtros.</td></tr>'
+                    : monthlySummaryRows
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Proventos de ${this.summaryFilters.month}/${this.summaryFilters.year}</h2>
+          <div class="status compact-status">
+            <span class="chip">Registros: ${this.monthlyDetails.length}</span>
+            <span class="chip">Total: ${currencyFormatter.format(this.monthlyDetailsTotal)}</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th class="static">Ticker</th>
+                  <th class="static">Tipo</th>
+                  <th class="static">Valor</th>
+                  <th class="static">Data Pagamento</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  this.monthlyDetails.length === 0
+                    ? '<tr><td colspan="4" class="empty">Nenhum provento encontrado para este mes.</td></tr>'
+                    : monthlyDetailsRows
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    `;
+
     this.root.innerHTML = `
       <main class="shell">
         <section class="hero">
@@ -557,115 +971,21 @@ class ProventoApp {
         <section class="status">
           <span class="chip">Total de registros: ${this.totalItems}</span>
           <span class="chip">Ordenacao: ${this.sortColumn} ${this.sortDirection}</span>
+          <span class="chip">Usuario: ${this.userEmail ?? '-'}</span>
           <span class="chip">${this.loading ? 'Sincronizando dados...' : 'Conectado ao Supabase'}</span>
+          <button class="btn btn-secondary" id="logout" type="button" ${this.loading ? 'disabled' : ''}>Sair</button>
         </section>
 
-        <div class="grid">
-          <section class="panel">
-            <h2>${this.isEditing ? 'Editar Provento' : 'Adicionar Novo Provento'}</h2>
-            <form id="provento-form">
-              <div class="form-grid">
-                <div class="field">
-                  <label for="ticker">Ticker</label>
-                  <input id="ticker" name="ticker" type="text" maxlength="50" value="${this.formState.ticker}" required />
-                </div>
-                <div class="field">
-                  <label for="tipo">Tipo</label>
-                  <input id="tipo" name="tipo" type="text" value="${this.formState.tipo}" required />
-                </div>
-                <div class="field">
-                  <label for="valor">Valor</label>
-                  <input id="valor" name="valor" type="number" step="0.01" min="0" value="${this.formState.valor || ''}" required />
-                </div>
-                <div class="field">
-                  <label for="data-com">Data COM</label>
-                  <input id="data-com" name="dataCom" type="date" value="${this.formState.dataCom ?? ''}" />
-                </div>
-                <div class="field">
-                  <label for="data-pagamento">Data Pagamento</label>
-                  <input id="data-pagamento" name="dataPagamento" type="date" value="${this.formState.dataPagamento}" required />
-                </div>
-              </div>
-              <div class="actions">
-                <button class="btn btn-primary" type="submit" ${this.loading ? 'disabled' : ''}>
-                  ${this.isEditing ? 'Atualizar' : 'Adicionar'}
-                </button>
-                ${
-                  this.isEditing
-                    ? `<button class="btn btn-secondary" id="cancel-edit" type="button" ${this.loading ? 'disabled' : ''}>Cancelar edicao</button>`
-                    : ''
-                }
-              </div>
-            </form>
-          </section>
+        <nav class="tabs" aria-label="Navegacao principal">
+          <button class="tab ${this.activeView === 'cadastro' ? 'active' : ''}" type="button" data-view="cadastro">
+            Cadastro
+          </button>
+          <button class="tab ${this.activeView === 'resumo' ? 'active' : ''}" type="button" data-view="resumo">
+            Resumo
+          </button>
+        </nav>
 
-          <section class="panel">
-            <h2>Importar Proventos via XLSX</h2>
-            <div class="form-grid">
-              <div class="field">
-                <label for="file-upload">Planilha</label>
-                <input id="file-upload" type="file" accept=".xlsx" ${this.loading ? 'disabled' : ''} />
-              </div>
-            </div>
-            <div class="actions">
-              <button class="btn btn-info" id="import-button" type="button" ${!this.selectedFile || this.loading ? 'disabled' : ''}>
-                Importar arquivo
-              </button>
-            </div>
-            <p class="hint">
-              Espera a mesma estrutura usada hoje no backend: ticker na coluna A, data de pagamento na B, tipo na C e valor na G.
-            </p>
-            <p class="hint">
-              Arquivo selecionado: ${this.selectedFile ? this.selectedFile.name : 'nenhum arquivo'}
-            </p>
-          </section>
-
-          <section class="panel">
-            <h2>Lista de Proventos</h2>
-            <div class="toolbar">
-              <label for="page-size">
-                Registros por pagina
-                <select id="page-size">
-                  ${pageSizeOptions}
-                </select>
-              </label>
-              <div>Pagina ${this.currentPage} de ${this.totalPages}</div>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th data-sort="ticker">Ticker${this.getSortIcon('ticker')}</th>
-                    <th data-sort="tipo">Tipo${this.getSortIcon('tipo')}</th>
-                    <th data-sort="valor">Valor${this.getSortIcon('valor')}</th>
-                    <th data-sort="dataCom">Data COM${this.getSortIcon('dataCom')}</th>
-                    <th data-sort="dataPagamento">Data Pagamento${this.getSortIcon('dataPagamento')}</th>
-                    <th class="static">Acoes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${
-                    this.totalItems === 0
-                      ? `<tr><td colspan="6" class="empty">Nenhum provento encontrado.</td></tr>`
-                      : tableRows
-                  }
-                </tbody>
-              </table>
-            </div>
-
-            <div class="pagination">
-              <div class="pagination-buttons">
-                <button class="btn btn-secondary" data-page="1" ${this.currentPage === 1 ? 'disabled' : ''}>Primeira</button>
-                <button class="btn btn-secondary" data-page="${Math.max(1, this.currentPage - 1)}" ${this.currentPage === 1 ? 'disabled' : ''}>Anterior</button>
-                ${paginationButtons}
-                <button class="btn btn-secondary" data-page="${Math.min(this.totalPages, this.currentPage + 1)}" ${this.currentPage === this.totalPages ? 'disabled' : ''}>Proxima</button>
-                <button class="btn btn-secondary" data-page="${this.totalPages}" ${this.currentPage === this.totalPages ? 'disabled' : ''}>Ultima</button>
-              </div>
-              <div>Total exibido: ${this.totalItems} registros</div>
-            </div>
-          </section>
-        </div>
+        ${this.activeView === 'cadastro' ? cadastroContent : resumoContent}
       </main>
     `;
 
@@ -679,4 +999,188 @@ if (!root) {
   throw new Error('Elemento #app nao encontrado.');
 }
 
-void new ProventoApp(root).start();
+const rootEl = root;
+
+type GoogleUser = { id: string; email: string; name: string; picture?: string };
+
+const STORAGE_KEY = 'gestaofinanceira_google_user';
+
+function getStoredUser(): GoogleUser | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as GoogleUser) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredUser(user: GoogleUser) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+}
+
+function clearStoredUser() {
+  window.localStorage.removeItem(STORAGE_KEY);
+}
+
+function decodeJwtPayload<T>(jwt: string): T | null {
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = atob(payload);
+    return JSON.parse(decoded) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function loadGoogleIdentityScript() {
+  if ((window as any).google?.accounts?.id) return;
+
+  return new Promise<void>((resolve, reject) => {
+    if (document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
+      const existing = document.querySelector<HTMLScriptElement>('script[src="https://accounts.google.com/gsi/client"]');
+      existing?.addEventListener('load', () => resolve());
+      existing?.addEventListener('error', () => reject(new Error('Falha ao carregar Google Identity Services')));
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Falha ao carregar Google Identity Services'));
+    document.head.appendChild(script);
+  });
+}
+
+async function renderLogin() {
+  rootEl.innerHTML = `
+    <main class="shell">
+      <section class="hero">
+        <h1>Entrar</h1>
+        <p>Faça login com sua conta do Google para acessar o painel de proventos.</p>
+      </section>
+
+      <section class="panel">
+        <div class="actions">
+          <button id="login-google" class="btn btn-info">Entrar com Google</button>
+        </div>
+        <p class="hint">
+          ⚙️ Coloque seu <code>VITE_GOOGLE_CLIENT_ID</code> no arquivo <code>.env</code>.
+        </p>
+      </section>
+    </main>
+  `;
+
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  if (!googleClientId) {
+    await Swal.fire(
+      'Erro',
+      'A variável VITE_GOOGLE_CLIENT_ID não está configurada. Verifique seu .env.',
+      'error',
+    );
+    return;
+  }
+
+  await loadGoogleIdentityScript();
+
+  const callback = (response: any) => {
+    const payload = decodeJwtPayload<{ sub: string; email: string; name: string; picture?: string }>(
+      response.credential,
+    );
+
+    if (!payload?.email) {
+      Swal.fire('Erro', 'Não foi possível obter seu e-mail do Google.', 'error');
+      return;
+    }
+
+    setStoredUser({
+      id: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      picture: payload.picture,
+    });
+
+    void initApp();
+  };
+
+  (window as any).google.accounts.id.initialize({
+    client_id: googleClientId,
+    callback,
+    ux_mode: 'popup',
+  });
+
+  const loginButton = rootEl.querySelector<HTMLButtonElement>('#login-google');
+  loginButton?.addEventListener('click', () => {
+    const shouldIgnoreConsole = (text: string) => {
+      return (
+        text.includes('Not signed in with the identity provider') ||
+        text.includes('FedCM get() rejects with AbortError') ||
+        text.includes('AbortError: signal is aborted')
+      );
+    };
+
+    const originalConsoleError = console.error;
+    console.error = (...args: unknown[]) => {
+      const message = String(args[0] ?? '');
+      if (shouldIgnoreConsole(message)) return;
+      originalConsoleError(...args);
+    };
+
+    const originalConsoleWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const message = String(args[0] ?? '');
+      if (shouldIgnoreConsole(message)) return;
+      originalConsoleWarn(...args);
+    };
+
+    const restoreConsole = () => {
+      console.error = originalConsoleError;
+      console.warn = originalConsoleWarn;
+    };
+
+    const handler = (event: PromiseRejectionEvent) => {
+      const reason = event.reason as Error | undefined;
+      const message = String(reason?.message ?? '');
+      if (shouldIgnoreConsole(message)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        Swal.fire({
+          title: 'Atenção',
+          html: `Você precisa estar logado em sua conta Google para continuar.<br/><br/>` +
+            `Abra <a href="https://accounts.google.com/ServiceLogin" target="_blank" rel="noopener">Google</a> e faça login, então tente novamente.`,
+          icon: 'info',
+        });
+      }
+    };
+
+    window.addEventListener('unhandledrejection', handler);
+
+    try {
+      (window as any).google.accounts.id.prompt();
+    } finally {
+      window.setTimeout(() => {
+        window.removeEventListener('unhandledrejection', handler);
+        restoreConsole();
+      }, 1500);
+    }
+  });
+}
+
+
+async function initApp() {
+  const user = getStoredUser();
+
+  if (!user) {
+    await renderLogin();
+    return;
+  }
+
+  const app = new ProventoApp(rootEl, user.email ?? null);
+  await app.start();
+}
+
+void initApp();

@@ -19,6 +19,7 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     },
   },
   auth: {
+    // Esta app não usa autenticação Supabase; o client é apenas para acesso ao banco.
     persistSession: false,
     autoRefreshToken: false,
   },
