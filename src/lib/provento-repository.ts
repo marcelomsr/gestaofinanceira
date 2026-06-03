@@ -54,7 +54,7 @@ export async function getProventos(): Promise<Provento[]> {
 }
 
 export async function createProvento(provento: ProventoInsert): Promise<Provento> {
-  const { data, error } = await supabase1
+  const { data, error } = await supabase
     .from(tableName)
     .insert(mapInsertWithCreatedAt(provento))
     .select('id, ticker, tipo, valor, data_com, data_pagamento, created_at')
