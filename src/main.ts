@@ -1,5 +1,5 @@
 import './styles.css';
-import Swal from 'sweetalert2';
+import Swal, { type SweetAlertIcon } from 'sweetalert2';
 import * as XLSX from 'xlsx';
 import {
   bulkInsertProventos,
@@ -40,6 +40,31 @@ const currencyFormatter = new Intl.NumberFormat('pt-BR', {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+
+const Toast = Swal.mixin({
+  toast: true,
+  position: 'bottom-end',
+  showConfirmButton: false,
+  timer: 4000,
+  timerProgressBar: true,
+});
+
+function showToast(title: string, text: string, icon: SweetAlertIcon) {
+  void Toast.fire({
+    title,
+    text,
+    icon,
+  });
+}
+
+function showHtmlToast(title: string, html: string, icon: SweetAlertIcon) {
+  void Toast.fire({
+    title,
+    html,
+    icon,
+    timer: 7000,
+  });
+}
 
 const initialFormState = (): FormState => ({
   id: 0,
@@ -93,7 +118,7 @@ class ProventoApp {
       this.adjustCurrentPage();
       this.render();
     } catch (error) {
-      await this.showError('Nao foi possivel carregar os proventos.', error);
+      this.showError('Nao foi possivel carregar os proventos.', error);
     } finally {
       this.setLoading(false);
     }
@@ -315,7 +340,7 @@ class ProventoApp {
     };
 
     if (!payload.ticker || !payload.tipo || !payload.dataPagamento || Number.isNaN(payload.valor)) {
-      await Swal.fire('Atencao', 'Preencha ticker, tipo, valor e data de pagamento.', 'warning');
+      showToast('Atencao', 'Preencha ticker, tipo, valor e data de pagamento.', 'warning');
       return;
     }
 
@@ -324,16 +349,16 @@ class ProventoApp {
     try {
       if (this.isEditing) {
         await updateProvento({ id: this.formState.id, ...payload });
-        await Swal.fire('Sucesso', 'Provento atualizado com sucesso.', 'success');
+        showToast('Sucesso', 'Provento atualizado com sucesso.', 'success');
       } else {
         await createProvento(payload);
-        await Swal.fire('Sucesso', 'Provento adicionado com sucesso.', 'success');
+        showToast('Sucesso', 'Provento adicionado com sucesso.', 'success');
       }
 
       this.resetForm();
       await this.loadProventos();
     } catch (error) {
-      await this.showError('Nao foi possivel salvar o provento.', error);
+      this.showError('Nao foi possivel salvar o provento.', error);
     } finally {
       this.setLoading(false);
     }
@@ -385,13 +410,13 @@ class ProventoApp {
 
     try {
       await deleteProvento(id);
-      await Swal.fire('Excluido', `O provento ${provento.ticker} foi removido.`, 'success');
+      showToast('Excluido', `O provento ${provento.ticker} foi removido.`, 'success');
       if (this.formState.id === id) {
         this.resetForm();
       }
       await this.loadProventos();
     } catch (error) {
-      await this.showError('Nao foi possivel excluir o provento.', error);
+      this.showError('Nao foi possivel excluir o provento.', error);
     } finally {
       this.setLoading(false);
     }
@@ -399,7 +424,7 @@ class ProventoApp {
 
   private async importFile() {
     if (!this.selectedFile) {
-      await Swal.fire('Atencao', 'Selecione um arquivo .xlsx antes de importar.', 'warning');
+      showToast('Atencao', 'Selecione um arquivo .xlsx antes de importar.', 'warning');
       return;
     }
 
@@ -409,16 +434,16 @@ class ProventoApp {
       const rows = await this.readWorkbook(this.selectedFile);
 
       if (rows.length === 0) {
-        await Swal.fire('Atencao', 'Nenhum provento valido foi encontrado no arquivo.', 'warning');
+        showToast('Atencao', 'Nenhum provento valido foi encontrado no arquivo.', 'warning');
         return;
       }
 
       const count = await bulkInsertProventos(rows);
       this.selectedFile = null;
-      await Swal.fire('Sucesso', `${count} proventos importados com sucesso.`, 'success');
+      showToast('Sucesso', `${count} proventos importados com sucesso.`, 'success');
       await this.loadProventos();
     } catch (error) {
-      await this.showError('Nao foi possivel importar a planilha.', error);
+      this.showError('Nao foi possivel importar a planilha.', error);
     } finally {
       this.setLoading(false);
       this.render();
@@ -540,9 +565,9 @@ class ProventoApp {
     return date.toISOString().slice(0, 10);
   }
 
-  private async showError(message: string, error: unknown) {
+  private showError(message: string, error: unknown) {
     const detail = error instanceof Error ? error.message : 'Erro desconhecido.';
-    await Swal.fire('Erro', `${message} ${detail}`, 'error');
+    showToast('Erro', `${message} ${detail}`, 'error');
   }
 
   private bindEvents() {
@@ -1076,7 +1101,7 @@ async function renderLogin() {
 
   const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   if (!googleClientId) {
-    await Swal.fire(
+    showToast(
       'Erro',
       'A variável VITE_GOOGLE_CLIENT_ID não está configurada. Verifique seu .env.',
       'error',
@@ -1092,7 +1117,7 @@ async function renderLogin() {
     );
 
     if (!payload?.email) {
-      Swal.fire('Erro', 'Não foi possível obter seu e-mail do Google.', 'error');
+      showToast('Erro', 'Não foi possível obter seu e-mail do Google.', 'error');
       return;
     }
 
@@ -1148,12 +1173,12 @@ async function renderLogin() {
         event.preventDefault();
         event.stopImmediatePropagation();
 
-        Swal.fire({
-          title: 'Atenção',
-          html: `Você precisa estar logado em sua conta Google para continuar.<br/><br/>` +
+        showHtmlToast(
+          'Atenção',
+          `Você precisa estar logado em sua conta Google para continuar.<br/><br/>` +
             `Abra <a href="https://accounts.google.com/ServiceLogin" target="_blank" rel="noopener">Google</a> e faça login, então tente novamente.`,
-          icon: 'info',
-        });
+          'info',
+        );
       }
     };
 
