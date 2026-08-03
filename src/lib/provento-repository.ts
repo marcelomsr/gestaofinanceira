@@ -11,6 +11,8 @@ type ProventoRow = {
   created_at?: string;
 };
 
+const fetchPageSize = 1000;
+
 function mapRow(row: ProventoRow): Provento {
   return {
     id: Number(row.id),
@@ -41,16 +43,28 @@ function mapInsertWithCreatedAt(provento: ProventoInsert) {
 }
 
 export async function getProventos(): Promise<Provento[]> {
-  const { data, error } = await supabase
-    .from(tableName)
-    .select('id, ticker, tipo, valor, data_com, data_pagamento, created_at')
-    .order('data_pagamento', { ascending: false });
+  const rows: ProventoRow[] = [];
 
-  if (error) {
-    throw new Error(error.message);
+  for (let start = 0; ; start += fetchPageSize) {
+    const { data, error } = await supabase
+      .from(tableName)
+      .select('id, ticker, tipo, valor, data_com, data_pagamento, created_at')
+      .order('data_pagamento', { ascending: false })
+      .range(start, start + fetchPageSize - 1);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const page = (data ?? []) as ProventoRow[];
+    rows.push(...page);
+
+    if (page.length < fetchPageSize) {
+      break;
+    }
   }
 
-  return (data as ProventoRow[]).map(mapRow);
+  return rows.map(mapRow);
 }
 
 export async function createProvento(provento: ProventoInsert): Promise<Provento> {
