@@ -13,6 +13,8 @@ import type { Provento, ProventoInsert, SortColumn, SortDirection } from './type
 type FormState = ProventoInsert & { id: number };
 type ViewMode = 'cadastro' | 'resumo';
 
+const authorizedEmails = new Set(['marcelosr6@gmail.com', 'juuhdealmeida@gmail.com']);
+
 type SummaryFilters = {
   year: string;
   month: string;
@@ -64,6 +66,19 @@ function showHtmlToast(title: string, html: string, icon: SweetAlertIcon) {
     icon,
     timer: 7000,
   });
+}
+
+function normalizeEmail(email: string | null | undefined) {
+  return email?.trim().toLowerCase() ?? '';
+}
+
+function isAuthorizedEmail(email: string | null | undefined) {
+  return authorizedEmails.has(normalizeEmail(email));
+}
+
+async function logout() {
+  clearStoredUser();
+  await renderLogin();
 }
 
 const initialFormState = (): FormState => ({
@@ -582,8 +597,7 @@ class ProventoApp {
 
     const logoutButton = this.root.querySelector<HTMLButtonElement>('#logout');
     logoutButton?.addEventListener('click', () => {
-      clearStoredUser();
-      window.location.reload();
+      void logout();
     });
 
     this.root.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((button) => {
@@ -1121,9 +1135,15 @@ async function renderLogin() {
       return;
     }
 
+    if (!isAuthorizedEmail(payload.email)) {
+      clearStoredUser();
+      renderUnauthorized(payload.email);
+      return;
+    }
+
     setStoredUser({
       id: payload.sub,
-      email: payload.email,
+      email: normalizeEmail(payload.email),
       name: payload.name,
       picture: payload.picture,
     });
@@ -1195,6 +1215,30 @@ async function renderLogin() {
   });
 }
 
+function renderUnauthorized(email: string | null | undefined) {
+  rootEl.innerHTML = `
+    <main class="shell">
+      <section class="hero">
+        <h1>Acesso negado</h1>
+        <p>A conta ${normalizeEmail(email) || 'informada'} nao possui autorizacao para acessar o sistema.</p>
+      </section>
+
+      <section class="panel">
+        <p class="hint">
+          Entre com uma conta autorizada para visualizar ou manipular os dados do sistema.
+        </p>
+        <div class="actions">
+          <button id="logout" class="btn btn-secondary" type="button">Sair</button>
+        </div>
+      </section>
+    </main>
+  `;
+
+  const logoutButton = rootEl.querySelector<HTMLButtonElement>('#logout');
+  logoutButton?.addEventListener('click', () => {
+    void logout();
+  });
+}
 
 async function initApp() {
   const user = getStoredUser();
@@ -1204,7 +1248,13 @@ async function initApp() {
     return;
   }
 
-  const app = new ProventoApp(rootEl, user.email ?? null);
+  if (!isAuthorizedEmail(user.email)) {
+    clearStoredUser();
+    renderUnauthorized(user.email);
+    return;
+  }
+
+  const app = new ProventoApp(rootEl, normalizeEmail(user.email));
   await app.start();
 }
 
