@@ -6,6 +6,8 @@ export interface Provento {
   dataCom: string | null;
   dataPagamento: string;
   createdAt?: string;
+  origem?: string | null;
+  referenciaExterna?: string | null;
 }
 
 export interface ProventoInsert {
@@ -14,6 +16,8 @@ export interface ProventoInsert {
   valor: number;
   dataCom: string | null;
   dataPagamento: string;
+  origem?: string | null;
+  referenciaExterna?: string | null;
 }
 
 export type SortColumn = 'ticker' | 'tipo' | 'valor' | 'dataCom' | 'dataPagamento';

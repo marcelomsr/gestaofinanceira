@@ -5,6 +5,7 @@ import {
   bulkInsertProventos,
   createProvento,
   deleteProvento,
+  getExistingReferenciasExternas,
   getProventos,
   updateProvento,
 } from './lib/provento-repository';
@@ -354,8 +355,14 @@ class ProventoApp {
       dataPagamento: this.formState.dataPagamento,
     };
 
-    if (!payload.ticker || !payload.tipo || !payload.dataPagamento || Number.isNaN(payload.valor)) {
-      showToast('Atencao', 'Preencha ticker, tipo, valor e data de pagamento.', 'warning');
+    if (
+      !payload.ticker ||
+      !payload.tipo ||
+      !payload.dataPagamento ||
+      Number.isNaN(payload.valor) ||
+      payload.valor <= 0
+    ) {
+      showToast('Atencao', 'Preencha ticker, tipo, valor maior que zero e data de pagamento.', 'warning');
       return;
     }
 
@@ -439,17 +446,28 @@ class ProventoApp {
 
   private async importFile() {
     if (!this.selectedFile) {
-      showToast('Atencao', 'Selecione um arquivo .xlsx antes de importar.', 'warning');
+      showToast('Atencao', 'Selecione um arquivo .xlsx ou .pdf antes de importar.', 'warning');
       return;
     }
 
     this.setLoading(true);
 
     try {
-      const rows = await this.readWorkbook(this.selectedFile);
+      const { rows, skippedDuplicates } = await this.readImportRows(this.selectedFile);
 
       if (rows.length === 0) {
-        showToast('Atencao', 'Nenhum provento valido foi encontrado no arquivo.', 'warning');
+        const duplicateMessage =
+          skippedDuplicates > 0
+            ? ` ${skippedDuplicates} operacao(oes) ja importada(s) foram ignorada(s).`
+            : '';
+        showToast('Atencao', `Nenhum provento valido foi encontrado no arquivo.${duplicateMessage}`, 'warning');
+        return;
+      }
+
+      const confirmed = await this.confirmImport(rows, skippedDuplicates);
+
+      if (!confirmed) {
+        showToast('Importacao cancelada', 'Nenhum provento foi gravado.', 'info');
         return;
       }
 
@@ -458,11 +476,115 @@ class ProventoApp {
       showToast('Sucesso', `${count} proventos importados com sucesso.`, 'success');
       await this.loadProventos();
     } catch (error) {
-      this.showError('Nao foi possivel importar a planilha.', error);
+      this.showError('Nao foi possivel importar o arquivo.', error);
     } finally {
       this.setLoading(false);
       this.render();
     }
+  }
+
+  private async readImportRows(
+    file: File,
+  ): Promise<{ rows: ProventoInsert[]; skippedDuplicates: number }> {
+    const extension = file.name.split('.').pop()?.toLowerCase();
+
+    if (extension === 'pdf' || file.type === 'application/pdf') {
+      return this.readInterRentalPdf(file);
+    }
+
+    if (extension === 'xlsx') {
+      return { rows: await this.readWorkbook(file), skippedDuplicates: 0 };
+    }
+
+    throw new Error('Formato invalido. Selecione um arquivo .xlsx ou .pdf.');
+  }
+
+  private async readInterRentalPdf(
+    file: File,
+  ): Promise<{ rows: ProventoInsert[]; skippedDuplicates: number }> {
+    const { extractPdfText, parseInterRentalNoteText } = await import('./lib/inter-rental-note');
+    const text = await extractPdfText(file);
+    const parsedRows = parseInterRentalNoteText(text);
+    const uniqueRows = new Map<string, ProventoInsert>();
+    let skippedDuplicates = 0;
+
+    parsedRows.forEach((row) => {
+      if (!row.referenciaExterna) {
+        return;
+      }
+
+      if (uniqueRows.has(row.referenciaExterna)) {
+        skippedDuplicates += 1;
+        return;
+      }
+
+      uniqueRows.set(row.referenciaExterna, row);
+    });
+
+    const references = [...uniqueRows.keys()];
+    const existingReferences = await getExistingReferenciasExternas(references);
+    const rows = [...uniqueRows.values()].filter((row) => {
+      if (row.referenciaExterna && existingReferences.has(row.referenciaExterna)) {
+        skippedDuplicates += 1;
+        return false;
+      }
+
+      return true;
+    });
+
+    return { rows, skippedDuplicates };
+  }
+
+  private async confirmImport(rows: ProventoInsert[], skippedDuplicates: number) {
+    const total = rows.reduce((sum, row) => sum + row.valor, 0);
+    const previewRows = rows
+      .map(
+        (row) => `
+          <tr>
+            <td>${this.escapeHtml(row.ticker)}</td>
+            <td>${this.escapeHtml(row.tipo)}</td>
+            <td>${currencyFormatter.format(row.valor)}</td>
+            <td>${this.formatDate(row.dataCom)}</td>
+            <td>${this.formatDate(row.dataPagamento)}</td>
+          </tr>
+        `,
+      )
+      .join('');
+
+    const duplicateMessage =
+      skippedDuplicates > 0
+        ? `<p class="hint">${skippedDuplicates} operacao(oes) ja importada(s) foram ignorada(s).</p>`
+        : '';
+
+    const confirmation = await Swal.fire({
+      title: 'Confirmar importacao?',
+      html: `
+        <p>${rows.length} lancamento(s) serao gravado(s), totalizando <b>${currencyFormatter.format(total)}</b>.</p>
+        ${duplicateMessage}
+        <div class="table-wrap import-preview">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Tipo</th>
+                <th>Valor</th>
+                <th>Data COM</th>
+                <th>Data Pagamento</th>
+              </tr>
+            </thead>
+            <tbody>${previewRows}</tbody>
+          </table>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Confirmar e gravar',
+      cancelButtonText: 'Cancelar',
+      reverseButtons: true,
+      width: 'min(900px, 95vw)',
+    });
+
+    return confirmation.isConfirmed;
   }
 
   private async readWorkbook(file: File): Promise<ProventoInsert[]> {
@@ -498,7 +620,7 @@ class ProventoApp {
     const ticker = tickerRaw.includes(' - ') ? tickerRaw.split(' - ')[0].trim() : tickerRaw;
     const valor = this.parseSpreadsheetAmount(row[6]);
 
-    if (!tipo || Number.isNaN(valor)) {
+    if (!tipo || Number.isNaN(valor) || valor <= 0) {
       throw new Error(`Linha ${rowNumber}: tipo ou valor invalidos.`);
     }
 
@@ -718,6 +840,15 @@ class ProventoApp {
     return new Date(`${value}T00:00:00`).toLocaleDateString('pt-BR');
   }
 
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   private render() {
     const tableRows = this.paginatedProventos
       .map(
@@ -849,11 +980,11 @@ class ProventoApp {
         </section>
 
         <section class="panel">
-          <h2>Importar Proventos via XLSX</h2>
+          <h2>Importar Proventos</h2>
           <div class="form-grid">
             <div class="field">
-              <label for="file-upload">Planilha</label>
-              <input id="file-upload" type="file" accept=".xlsx" ${this.loading ? 'disabled' : ''} />
+              <label for="file-upload">Arquivo</label>
+              <input id="file-upload" type="file" accept=".xlsx,.pdf,application/pdf" ${this.loading ? 'disabled' : ''} />
             </div>
           </div>
           <div class="actions">
@@ -862,7 +993,7 @@ class ProventoApp {
             </button>
           </div>
           <p class="hint">
-            Espera a mesma estrutura usada hoje no backend: ticker na coluna A, data de pagamento na B, tipo na C e valor na G.
+            XLSX: ticker na coluna A, data de pagamento na B, tipo na C e valor na G. PDF: nota de aluguel de ativos do Banco Inter.
           </p>
           <p class="hint">
             Arquivo selecionado: ${this.selectedFile ? this.selectedFile.name : 'nenhum arquivo'}

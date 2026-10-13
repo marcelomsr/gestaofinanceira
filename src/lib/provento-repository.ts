@@ -9,7 +9,12 @@ type ProventoRow = {
   data_com: string | null;
   data_pagamento: string;
   created_at?: string;
+  origem?: string | null;
+  referencia_externa?: string | null;
 };
+
+const selectColumns =
+  'id, ticker, tipo, valor, data_com, data_pagamento, created_at';
 
 const fetchPageSize = 1000;
 
@@ -22,17 +27,37 @@ function mapRow(row: ProventoRow): Provento {
     dataCom: row.data_com,
     dataPagamento: row.data_pagamento,
     createdAt: row.created_at,
+    origem: row.origem,
+    referenciaExterna: row.referencia_externa,
   };
 }
 
 function mapInsert(provento: ProventoInsert) {
-  return {
+  const row: {
+    ticker: string;
+    tipo: string;
+    valor: number;
+    data_com: string | null;
+    data_pagamento: string;
+    origem?: string | null;
+    referencia_externa?: string | null;
+  } = {
     ticker: provento.ticker,
     tipo: provento.tipo,
     valor: provento.valor,
     data_com: provento.dataCom,
     data_pagamento: provento.dataPagamento,
   };
+
+  if (provento.origem !== undefined) {
+    row.origem = provento.origem;
+  }
+
+  if (provento.referenciaExterna !== undefined) {
+    row.referencia_externa = provento.referenciaExterna;
+  }
+
+  return row;
 }
 
 function mapInsertWithCreatedAt(provento: ProventoInsert) {
@@ -48,7 +73,7 @@ export async function getProventos(): Promise<Provento[]> {
   for (let start = 0; ; start += fetchPageSize) {
     const { data, error } = await supabase
       .from(tableName)
-      .select('id, ticker, tipo, valor, data_com, data_pagamento, created_at')
+      .select(selectColumns)
       .order('data_pagamento', { ascending: false })
       .range(start, start + fetchPageSize - 1);
 
@@ -71,7 +96,7 @@ export async function createProvento(provento: ProventoInsert): Promise<Provento
   const { data, error } = await supabase
     .from(tableName)
     .insert(mapInsertWithCreatedAt(provento))
-    .select('id, ticker, tipo, valor, data_com, data_pagamento, created_at')
+    .select(selectColumns)
     .single();
 
   if (error) {
@@ -113,4 +138,25 @@ export async function bulkInsertProventos(proventos: ProventoInsert[]): Promise<
   }
 
   return count ?? proventos.length;
+}
+
+export async function getExistingReferenciasExternas(referencias: string[]): Promise<Set<string>> {
+  if (referencias.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await supabase
+    .from(tableName)
+    .select('referencia_externa')
+    .in('referencia_externa', referencias);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return new Set(
+    ((data ?? []) as Pick<ProventoRow, 'referencia_externa'>[])
+      .map((row) => row.referencia_externa)
+      .filter((referencia): referencia is string => Boolean(referencia)),
+  );
 }

@@ -5,8 +5,18 @@ create table if not exists public.provento (
   valor numeric(18, 2) not null,
   data_com date null,
   data_pagamento date not null,
+  origem varchar(100) null,
+  referencia_externa varchar(255) null,
   created_at timestamptz not null default now()
 );
+
+alter table public.provento
+  add column if not exists origem varchar(100) null,
+  add column if not exists referencia_externa varchar(255) null;
+
+create unique index if not exists provento_referencia_externa_unique
+  on public.provento (referencia_externa)
+  where referencia_externa is not null;
 
 alter table public.provento enable row level security;
 
